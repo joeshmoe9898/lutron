@@ -1,0 +1,109 @@
+blueprint:
+  name: RA3 Touch Keypad — Short vs Held
+  description: >
+    Distinguish short vs held presses for Lutron RadioRA 3 Sunnata Touch keypads.
+    Uses the Lutron (LEAP) integration's button events. Choose whether the "held"
+    action fires during the hold (at the threshold) or only after release.
+  domain: automation
+  input:
+    keypad_serial:
+      name: Keypad serial
+      description: The keypad's serial number reported by the Lutron integration.
+      selector:
+        text: {}
+    button_number:
+      name: Button number
+      description: Button number on the keypad (e.g., 1, 2, 3…).
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+          mode: box
+    hold_seconds:
+      name: Hold threshold (seconds)
+      description: How long the button must be held to count as "held".
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.1
+          mode: slider
+    fire_when:
+      name: When to fire the HELD action
+      description: Run the held action during the hold (at threshold) or only after release.
+      default: during_hold
+      selector:
+        select:
+          options:
+            - during_hold
+            - on_release
+    short_action:
+      name: Action on SHORT press
+      description: Runs when the press is shorter than the hold threshold.
+      default: []
+      selector:
+        action: {}
+    held_action:
+      name: Action on HELD press
+      description: Runs when the press meets/exceeds the hold threshold.
+      default: []
+      selector:
+        action: {}
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  - platform: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      serial: !input keypad_serial
+      button_number: !input button_number
+      action: press
+
+variables:
+  fire_when: !input fire_when
+  hold_seconds: !input hold_seconds
+  serial: !input keypad_serial
+  button: !input button_number
+
+action:
+  - choose:
+      - conditions: "{{ fire_when == 'during_hold' }}"
+        sequence:
+          - wait_for_trigger:
+              - platform: event
+                event_type: lutron_caseta_button_event
+                event_data:
+                  serial: "{{ serial }}"
+                  button_number: "{{ button }}"
+                  action: release
+            timeout: "{{ (hold_seconds | float) ~ ' seconds' }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is none }}"
+                sequence: !input held_action
+              - conditions: []
+                sequence: !input short_action
+      - conditions: "{{ fire_when == 'on_release' }}"
+        sequence:
+          - variables:
+              press_time: "{{ now() }}"
+          - wait_for_trigger:
+              - platform: event
+                event_type: lutron_caseta_button_event
+                event_data:
+                  serial: "{{ serial }}"
+                  button_number: "{{ button }}"
+                  action: release
+            timeout: "00:00:15"
+            continue_on_timeout: false
+          - variables:
+              elapsed: "{{ (now() - press_time).total_seconds() }}"
+          - choose:
+              - conditions: "{{ elapsed | float >= hold_seconds | float }}"
+                sequence: !input held_action
+              - conditions: []
+                sequence: !input short_action
