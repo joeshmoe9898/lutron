@@ -24,12 +24,6 @@ blueprint:
             - button_2
             - button_3
             - button_4
-            - button_5
-            - button_6
-            - button_7
-            - button_8
-            - button_9
-            - button_10
       default: button_1
 
     hold_seconds:
