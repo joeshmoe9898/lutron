@@ -1,25 +1,37 @@
 blueprint:
-  name: RA3 Touch Keypad — Short vs Held
+  name: RA3 Touch Keypad — Short vs Held (device triggers)
   description: >
-    Distinguish short vs held presses for Lutron RadioRA 3 Sunnata Touch keypads.
-    Uses the Lutron (LEAP) integration's button events. Choose whether the "held"
-    action fires during the hold (at the threshold) or only after release.
+    Distinguish short vs held presses for Lutron RadioRA 3 Sunnata Touch keypads,
+    using Home Assistant's Lutron device triggers (press/release per button).
+    Choose whether the "held" action fires during the hold (at threshold) or only after release.
   domain: automation
+
   input:
-    keypad_serial:
-      name: Keypad serial
-      description: The keypad's serial number reported by the Lutron integration.
+    keypad_device:
+      name: Keypad device
+      description: Select your RA3/Sunnata Touch keypad (from the Lutron Caséta integration).
       selector:
-        text: {}
-    button_number:
-      name: Button number
-      description: Button number on the keypad (e.g., 1, 2, 3…).
-      default: 1
+        device:
+          integration: lutron_caseta
+
+    button_subtype:
+      name: Button
+      description: Select the specific keypad button (as exposed by the device trigger subtype).
       selector:
-        number:
-          min: 1
-          max: 10
-          mode: box
+        select:
+          options:
+            - button_1
+            - button_2
+            - button_3
+            - button_4
+            - button_5
+            - button_6
+            - button_7
+            - button_8
+            - button_9
+            - button_10
+      default: button_1
+
     hold_seconds:
       name: Hold threshold (seconds)
       description: How long the button must be held to count as "held".
@@ -30,6 +42,7 @@ blueprint:
           max: 10
           step: 0.1
           mode: slider
+
     fire_when:
       name: When to fire the HELD action
       description: Run the held action during the hold (at threshold) or only after release.
@@ -39,12 +52,14 @@ blueprint:
           options:
             - during_hold
             - on_release
+
     short_action:
       name: Action on SHORT press
       description: Runs when the press is shorter than the hold threshold.
       default: []
       selector:
         action: {}
+
     held_action:
       name: Action on HELD press
       description: Runs when the press meets/exceeds the hold threshold.
@@ -55,49 +70,55 @@ blueprint:
 mode: single
 max_exceeded: silent
 
+# Trigger on the device-level "press" for the selected button.
 trigger:
-  - platform: event
-    event_type: lutron_caseta_button_event
-    event_data:
-      serial: !input keypad_serial
-      button_number: !input button_number
-      action: press
+  - platform: device
+    domain: lutron_caseta
+    device_id: !input keypad_device
+    type: press
+    subtype: !input button_subtype
 
+# Expose inputs for use in templates and device triggers below.
 variables:
+  device_id: !input keypad_device
+  button_subtype: !input button_subtype
   fire_when: !input fire_when
   hold_seconds: !input hold_seconds
-  serial: !input keypad_serial
-  button: !input button_number
 
 action:
   - choose:
+
+      # -------- A) Fire HELD exactly at threshold (no release needed) --------
       - conditions: "{{ fire_when == 'during_hold' }}"
         sequence:
+          # Wait for a matching "release" from the same device & button up to 'hold_seconds'.
           - wait_for_trigger:
-              - platform: event
-                event_type: lutron_caseta_button_event
-                event_data:
-                  serial: "{{ serial }}"
-                  button_number: "{{ button }}"
-                  action: release
+              - platform: device
+                domain: lutron_caseta
+                device_id: "{{ device_id }}"
+                type: release
+                subtype: "{{ button_subtype }}"
             timeout: "{{ (hold_seconds | float) ~ ' seconds' }}"
             continue_on_timeout: true
           - choose:
+              # No release seen within hold_seconds => HELD
               - conditions: "{{ wait.trigger is none }}"
                 sequence: !input held_action
+              # Released before threshold => SHORT
               - conditions: []
                 sequence: !input short_action
+
+      # -------- B) Fire HELD only after release if duration >= threshold --------
       - conditions: "{{ fire_when == 'on_release' }}"
         sequence:
           - variables:
               press_time: "{{ now() }}"
           - wait_for_trigger:
-              - platform: event
-                event_type: lutron_caseta_button_event
-                event_data:
-                  serial: "{{ serial }}"
-                  button_number: "{{ button }}"
-                  action: release
+              - platform: device
+                domain: lutron_caseta
+                device_id: "{{ device_id }}"
+                type: release
+                subtype: "{{ button_subtype }}"
             timeout: "00:00:15"
             continue_on_timeout: false
           - variables:
